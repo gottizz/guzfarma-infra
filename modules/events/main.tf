@@ -97,6 +97,21 @@ resource "aws_sesv2_email_identity" "sender" {
   tags           = local.tags
 }
 
+# --- Alertas de stock (paso 8) -----------------------------------------------
+
+resource "aws_sns_topic" "alerts" {
+  name              = "${local.name}-alerts"
+  kms_master_key_id = var.kms_key_arn
+  tags              = local.tags
+}
+
+# Llega un correo al administrador: hay que confirmar la suscripción.
+resource "aws_sns_topic_subscription" "admin" {
+  topic_arn = aws_sns_topic.alerts.arn
+  protocol  = "email"
+  endpoint  = var.admin_email
+}
+
 # --- Permisos ----------------------------------------------------------------
 # Los roles solo se crean si no se entrega var.existing_role_arn
 # (AWS Academy no permite crear roles: se usa LabRole).
