@@ -175,3 +175,48 @@ resource "aws_iam_role_policy" "notif" {
   role   = aws_iam_role.notif[0].id
   policy = data.aws_iam_policy_document.notif.json
 }
+
+locals {
+  stock_role_arn = coalesce(var.existing_role_arn, one(aws_iam_role.stock[*].arn))
+}
+
+# stock-monitor: corre en la VPC, lee el secreto de Oracle y publica en SNS
+resource "aws_iam_role" "stock" {
+  count = local.create_roles ? 1 : 0
+
+  name               = "${local.stock_name}-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = local.tags
+}
+
+resource "aws_iam_role_policy_attachment" "stock_vpc" {
+  count = local.create_roles ? 1 : 0
+
+  role       = aws_iam_role.stock[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaVPCAccessExecutionRole"
+}
+
+data "aws_iam_policy_document" "stock" {
+  statement {
+    actions   = ["secretsmanager:GetSecretValue"]
+    resources = [var.db_secret_arn]
+  }
+
+  statement {
+    actions   = ["sns:Publish"]
+    resources = [aws_sns_topic.alerts.arn]
+  }
+
+  statement {
+    actions   = ["kms:Decrypt", "kms:GenerateDataKey"]
+    resources = [var.kms_key_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "stock" {
+  count = local.create_roles ? 1 : 0
+
+  name   = "stock-monitor"
+  role   = aws_iam_role.stock[0].id
+  policy = data.aws_iam_policy_document.stock.json
+}
