@@ -1,0 +1,24 @@
+# Terraform
+.terraform/
+*.tfstate
+*.tfstate.*
+crash.log
+crash.*.log
+*.tfplan
+tfplan
+
+# Variables con datos reales (solo se suben los .example)
+*.tfvars
+!*.tfvars.example
+backend.hcl
+!backend.hcl.example
+
+# Paquetes generados de las Lambda
+lambdas/**/*.zip
+.build/
+
+# Sistema / editores
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
