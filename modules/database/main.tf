@@ -131,7 +131,7 @@ resource "aws_db_instance_role_association" "s3" {
 # --- Respaldos RMAN ----------------------------------------------------------
 
 resource "aws_s3_bucket" "rman" {
-  bucket        = "local.name-rman-{data.aws_caller_identity.current.account_id}"
+  bucket        = "${local.name}-rman-${data.aws_caller_identity.current.account_id}"
   force_destroy = true
   tags          = local.tags
 }
