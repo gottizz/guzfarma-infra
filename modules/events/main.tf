@@ -40,3 +40,67 @@ resource "aws_sqs_queue" "orders" {
 
   tags = local.tags
 }
+
+# --- Permisos ----------------------------------------------------------------
+# Los roles solo se crean si no se entrega var.existing_role_arn
+# (AWS Academy no permite crear roles: se usa LabRole).
+
+locals {
+  notif_role_arn = coalesce(var.existing_role_arn, one(aws_iam_role.notif[*].arn))
+}
+
+data "aws_iam_policy_document" "lambda_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["lambda.amazonaws.com"]
+    }
+  }
+}
+
+# notif-pedido: lee la cola, envía correos y escribe logs
+resource "aws_iam_role" "notif" {
+  count = local.create_roles ? 1 : 0
+
+  name               = "${local.notif_name}-role"
+  assume_role_policy = data.aws_iam_policy_document.lambda_assume.json
+  tags               = local.tags
+}
+
+resource "aws_iam_role_policy_attachment" "notif_logs" {
+  count = local.create_roles ? 1 : 0
+
+  role       = aws_iam_role.notif[0].name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole"
+}
+
+data "aws_iam_policy_document" "notif" {
+  statement {
+    actions = [
+      "sqs:ReceiveMessage",
+      "sqs:DeleteMessage",
+      "sqs:GetQueueAttributes",
+    ]
+    resources = [aws_sqs_queue.orders.arn]
+  }
+
+  statement {
+    actions   = ["ses:SendEmail", "ses:SendRawEmail"]
+    resources = ["*"]
+  }
+
+  statement {
+    actions   = ["kms:Decrypt"]
+    resources = [var.kms_key_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "notif" {
+  count = local.create_roles ? 1 : 0
+
+  name   = "notif-pedido"
+  role   = aws_iam_role.notif[0].id
+  policy = data.aws_iam_policy_document.notif.json
+}
