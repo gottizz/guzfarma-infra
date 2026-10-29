@@ -1,0 +1,6 @@
+# Copiar como backend.hcl y reemplazar <ACCOUNT_ID> por el output de bootstrap.
+bucket       = "guzfarma-tfstate-<ACCOUNT_ID>"
+key          = "envs/dev/terraform.tfstate"
+region       = "us-east-1"
+encrypt      = true
+use_lockfile = true
