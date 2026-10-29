@@ -535,6 +535,26 @@ resource "aws_wafv2_web_acl_association" "alb" {
   resource_arn = var.alb_arn
   web_acl_arn  = aws_wafv2_web_acl.alb.arn
 }
+
+# 4. DNS - ROUTE 53 (OPCIONAL)
+# =============================================================================
+
+resource "aws_route53_record" "web" {
+  count = local.custom_domain ? 1 : 0
+
+  zone_id = var.hosted_zone_id
+  name    = var.domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.this.domain_name
+    zone_id                = aws_cloudfront_distribution.this.hosted_zone_id
+    evaluate_target_health = false
+  }
+}
+
+
+
 # TODO (Integrante 5)
 #
 # --- Usuarios (Cognito) ---
