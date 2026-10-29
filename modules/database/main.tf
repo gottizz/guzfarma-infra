@@ -37,6 +37,51 @@ resource "aws_db_option_group" "this" {
   tags = local.tags
 }
 
+# Rol que RDS asume para escribir los respaldos RMAN en S3
+data "aws_iam_policy_document" "rds_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "Service"
+      identifiers = ["rds.amazonaws.com"]
+    }
+  }
+}
+
+resource "aws_iam_role" "rds_s3" {
+  name               = "${local.name}-rds-s3"
+  assume_role_policy = data.aws_iam_policy_document.rds_assume.json
+  tags               = local.tags
+}
+
+data "aws_iam_policy_document" "rds_s3" {
+  statement {
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:ListBucket",
+      "s3:GetBucketLocation",
+
+    ]
+    resources = [
+      aws_s3_bucket.rman.arn,
+      "${aws_s3_bucket.rman.arn}/*",
+    ]
+  }
+
+  statement {
+    actions   = ["kms:Encrypt", "kms:Decrypt", "kms:GenerateDataKey"]
+    resources = [var.kms_key_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "rds_s3" {
+  name   = "s3-rman"
+  role   = aws_iam_role.rds_s3.id
+  policy = data.aws_iam_policy_document.rds_s3.json
+}
+
 # --- Respaldos RMAN ----------------------------------------------------------
 
 resource "aws_s3_bucket" "rman" {
