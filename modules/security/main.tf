@@ -94,11 +94,47 @@ resource "aws_vpc_security_group_egress_rule" "app_https" {
   description       = "HTTPS outbound for payment gateway via NAT"
 }
 
+# Lambda (stock-monitor) llama a Secrets Manager y SNS. En dev los interface
+# endpoints están apagados, así que esas llamadas salen por la NAT.
+resource "aws_vpc_security_group_egress_rule" "lambda_https" {
+  security_group_id = aws_security_group.groups["lambda"].id
+  cidr_ipv4         = "0.0.0.0/0"
+  ip_protocol       = "tcp"
+  from_port         = 443
+  to_port           = 443
+  description       = "HTTPS outbound to AWS APIs via NAT"
+}
+
+data "aws_caller_identity" "current" {}
+
 resource "aws_kms_key" "main" {
   description             = "Encryption key for ${local.name}"
   enable_key_rotation     = true
   deletion_window_in_days = 30
-  tags                    = merge(local.tags, { Name = local.name })
+
+  # La cuenta administra la llave por IAM. CloudWatch necesita permiso explícito:
+  # las alarmas publican en el tópico SNS de alertas, que está cifrado con esta llave.
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid       = "AdminDeLaCuenta"
+        Effect    = "Allow"
+        Principal = { AWS = "arn:aws:iam::${data.aws_caller_identity.current.account_id}:root" }
+        Action    = "kms:*"
+        Resource  = "*"
+      },
+      {
+        Sid       = "AlarmasHaciaSNS"
+        Effect    = "Allow"
+        Principal = { Service = "cloudwatch.amazonaws.com" }
+        Action    = ["kms:Decrypt", "kms:GenerateDataKey*"]
+        Resource  = "*"
+      },
+    ]
+  })
+
+  tags = merge(local.tags, { Name = local.name })
 }
 resource "aws_kms_alias" "main" {
   name          = "alias/${local.name}"
