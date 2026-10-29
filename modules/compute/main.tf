@@ -203,3 +203,127 @@ resource "aws_lb_listener_rule" "api" {
 
   tags = local.tags
 }
+
+locals {
+  # Roles: en AWS Academy no se pueden crear roles IAM -> se usa LabRole para ambos.
+  create_roles       = var.existing_role_arn == null
+  execution_role_arn = local.create_roles ? aws_iam_role.execution[0].arn : var.existing_role_arn
+  task_role_arn      = local.create_roles ? aws_iam_role.task[0].arn : var.existing_role_arn
+
+  # Prefijo de Parameter Store sin "/" final (ej. "/guzfarma/dev").
+  ssm_path = trimsuffix(var.ssm_parameter_prefix, "/")
+}
+
+# =============================================================================
+# 3. ECS Fargate
+# =============================================================================
+
+resource "aws_cloudwatch_log_group" "api" {
+  name              = "/ecs/${local.name}/api"
+  retention_in_days = var.log_retention_days
+  tags              = local.tags
+}
+
+resource "aws_cloudwatch_log_group" "web" {
+  name              = "/ecs/${local.name}/web"
+  retention_in_days = var.log_retention_days
+  tags              = local.tags
+}
+
+# --- IAM (solo si la cuenta permite crear roles; en AWS Academy se usa LabRole) ---
+
+data "aws_iam_policy_document" "ecs_tasks_assume" {
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["ecs-tasks.amazonaws.com"]
+    }
+  }
+}
+
+# Rol de ejecución: lo usa el agente de ECS para bajar la imagen, escribir logs y leer secretos.
+resource "aws_iam_role" "execution" {
+  count = local.create_roles ? 1 : 0
+
+  name               = "${local.name}-ecs-execution"
+  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+  tags               = local.tags
+}
+
+resource "aws_iam_role_policy_attachment" "execution_managed" {
+  count = local.create_roles ? 1 : 0
+
+  role       = aws_iam_role.execution[0].name
+  policy_arn = "arn:${local.partition}:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy"
+}
+
+resource "aws_iam_role_policy" "execution_secrets" {
+  count = local.create_roles ? 1 : 0
+
+  name = "leer-secretos"
+  role = aws_iam_role.execution[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "LeerSecretos"
+        Effect   = "Allow"
+        Action   = ["secretsmanager:GetSecretValue"]
+        Resource = [var.db_secret_arn, var.payment_secret_arn]
+      },
+      {
+        Sid      = "DescifrarSecretosEImagenes"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt"]
+        Resource = [var.kms_key_arn]
+      },
+    ]
+  })
+}
+
+# Rol de tarea: los permisos que usa el código de la API en tiempo de ejecución.
+resource "aws_iam_role" "task" {
+  count = local.create_roles ? 1 : 0
+
+  name               = "${local.name}-ecs-task"
+  assume_role_policy = data.aws_iam_policy_document.ecs_tasks_assume.json
+  tags               = local.tags
+}
+
+resource "aws_iam_role_policy" "task_app" {
+  count = local.create_roles ? 1 : 0
+
+  name = "permisos-api"
+  role = aws_iam_role.task[0].id
+
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid      = "EnviarPedidos"
+        Effect   = "Allow"
+        Action   = ["sqs:SendMessage", "sqs:GetQueueAttributes"]
+        Resource = [var.orders_queue_arn]
+      },
+      {
+        Sid    = "LeerConfiguracion"
+        Effect = "Allow"
+        Action = ["ssm:GetParametersByPath", "ssm:GetParameters", "ssm:GetParameter"]
+        Resource = [
+          "arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter${local.ssm_path}",
+          "arn:${local.partition}:ssm:${local.region}:${local.account_id}:parameter${local.ssm_path}/*",
+        ]
+      },
+      {
+        # Decrypt: parámetros SecureString. GenerateDataKey: enviar a la cola SQS cifrada con KMS.
+        Sid      = "UsarLlaveKMS"
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:GenerateDataKey"]
+        Resource = [var.kms_key_arn]
+      },
+    ]
+  })
+}
