@@ -10,6 +10,158 @@ locals {
   custom_domain = var.domain_name != ""
 }
 
+
+# 1. USUARIOS - AMAZON COGNITO
+
+resource "aws_cognito_user_pool" "this" {
+  name = "${local.name}-users"
+
+  mfa_configuration = "OPTIONAL"
+
+  password_policy {
+    minimum_length                   = 8
+    require_lowercase                = true
+    require_uppercase                = true
+    require_numbers                  = true
+    require_symbols                  = true
+    temporary_password_validity_days = 7
+  }
+
+  software_token_mfa_configuration {
+    enabled = true
+  }
+
+  tags = local.tags
+}
+
+resource "aws_cognito_user_pool_client" "web" {
+  name         = "${local.name}-web"
+  user_pool_id = aws_cognito_user_pool.this.id
+
+  generate_secret = false
+
+  explicit_auth_flows = [
+    "ALLOW_USER_PASSWORD_AUTH",
+    "ALLOW_USER_SRP_AUTH",
+    "ALLOW_REFRESH_TOKEN_AUTH"
+  ]
+
+  allowed_oauth_flows_user_pool_client = true
+
+  allowed_oauth_flows = [
+    "code"
+  ]
+
+  allowed_oauth_scopes = [
+    "openid",
+    "email",
+    "profile"
+  ]
+
+  supported_identity_providers = [
+    "COGNITO"
+  ]
+
+  callback_urls = var.cognito_callback_urls
+
+  access_token_validity = 60
+
+  token_validity_units {
+    access_token = "minutes"
+  }
+
+  prevent_user_existence_errors = "ENABLED"
+}
+
+resource "aws_cognito_user_group" "groups" {
+  for_each = toset([
+    "administrador",
+    "farmaceutico",
+    "vendedor",
+    "cliente"
+  ])
+
+  name         = each.value
+  user_pool_id = aws_cognito_user_pool.this.id
+}
+
+# 2. API - API GATEWAY HTTP + VPC LINK
+# =============================================================================
+
+resource "aws_apigatewayv2_api" "this" {
+  name          = "${local.name}-api"
+  protocol_type = "HTTP"
+
+  tags = local.tags
+}
+
+resource "aws_apigatewayv2_vpc_link" "this" {
+  name = "${local.name}-vpc-link"
+
+  subnet_ids = var.app_subnet_ids
+
+  security_group_ids = [
+    var.sg_vpclink_id
+  ]
+
+  tags = local.tags
+}
+
+resource "aws_apigatewayv2_integration" "alb" {
+  api_id = aws_apigatewayv2_api.this.id
+
+  integration_type   = "HTTP_PROXY"
+  integration_uri    = var.alb_listener_arn
+  integration_method = "ANY"
+
+  connection_type = "VPC_LINK"
+  connection_id   = aws_apigatewayv2_vpc_link.this.id
+}
+
+resource "aws_apigatewayv2_authorizer" "cognito" {
+  api_id = aws_apigatewayv2_api.this.id
+
+  authorizer_type = "JWT"
+  name            = "${local.name}-cognito-authorizer"
+
+  identity_sources = [
+    "$request.header.Authorization"
+  ]
+
+  jwt_configuration {
+    audience = [
+      aws_cognito_user_pool_client.web.id
+    ]
+
+    issuer = "https://${aws_cognito_user_pool.this.endpoint}"
+  }
+}
+
+resource "aws_apigatewayv2_route" "api" {
+  api_id = aws_apigatewayv2_api.this.id
+
+  route_key = "ANY /api/{proxy+}"
+
+  target = "integrations/${aws_apigatewayv2_integration.alb.id}"
+
+  authorization_type = "JWT"
+  authorizer_id      = aws_apigatewayv2_authorizer.cognito.id
+}
+
+resource "aws_apigatewayv2_stage" "default" {
+  api_id = aws_apigatewayv2_api.this.id
+
+  name        = "$default"
+  auto_deploy = true
+
+  default_route_settings {
+    throttling_rate_limit  = var.api_throttle_rate
+    throttling_burst_limit = var.api_throttle_burst
+  }
+
+  tags = local.tags
+}
+
 # TODO (Integrante 5)
 #
 # --- Usuarios (Cognito) ---
