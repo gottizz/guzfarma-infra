@@ -112,6 +112,95 @@ resource "aws_sns_topic_subscription" "admin" {
   endpoint  = var.admin_email
 }
 
+# stock-monitor usa `oracledb` (modo thin), que no viene en Lambda. Se instala
+# junto al handler, con ruedas para Linux x86_64 / Python 3.12, sin importar el
+# sistema operativo desde el que se ejecute Terraform. Requiere `pip` en el PATH.
+resource "terraform_data" "stock_deps" {
+  triggers_replace = [
+    filesha256("${var.lambdas_source_dir}/stock_monitor/requirements.txt"),
+  ]
+
+  provisioner "local-exec" {
+    working_dir = "${var.lambdas_source_dir}/stock_monitor"
+    command     = "pip install --quiet --upgrade --requirement requirements.txt --target vendor --platform manylinux2014_x86_64 --platform manylinux_2_28_x86_64 --implementation cp --python-version 3.12 --only-binary=:all:"
+  }
+}
+
+data "archive_file" "stock" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_dir}/stock_monitor"
+  output_path = "${path.module}/.build/stock_monitor.zip"
+  excludes    = ["requirements.txt"]
+
+  depends_on = [terraform_data.stock_deps]
+}
+
+resource "aws_cloudwatch_log_group" "stock" {
+  name              = "/aws/lambda/${local.stock_name}"
+  retention_in_days = 90
+  tags              = local.tags
+}
+
+resource "aws_lambda_function" "stock" {
+  function_name = local.stock_name
+  description   = "Consulta en Oracle los productos bajo su stock mínimo y avisa por SNS."
+  role          = local.stock_role_arn
+  runtime       = "python3.12"
+  handler       = "handler.lambda_handler"
+  timeout       = local.stock_timeout
+  memory_size   = 256
+
+  filename         = data.archive_file.stock.output_path
+  source_code_hash = data.archive_file.stock.output_base64sha256
+
+  vpc_config {
+    subnet_ids         = var.app_subnet_ids
+    security_group_ids = [var.sg_lambda_id]
+  }
+
+  environment {
+    variables = {
+      DB_HOST          = var.db_address
+      DB_PORT          = tostring(var.db_port)
+      DB_SERVICE       = var.db_name
+      DB_SECRET_ARN    = var.db_secret_arn
+      ALERTS_TOPIC_ARN = aws_sns_topic.alerts.arn
+    }
+  }
+
+  tags = local.tags
+
+  depends_on = [
+    aws_cloudwatch_log_group.stock,
+    aws_iam_role_policy_attachment.stock_vpc,
+    aws_iam_role_policy.stock,
+  ]
+}
+
+resource "aws_cloudwatch_event_rule" "stock_daily" {
+  name                = "${local.name}-stock-daily"
+  description         = "Dispara stock-monitor una vez al día."
+  schedule_expression = var.stock_check_schedule
+  tags                = local.tags
+}
+
+resource "aws_cloudwatch_event_target" "stock" {
+  rule = aws_cloudwatch_event_rule.stock_daily.name
+  arn  = aws_lambda_function.stock.arn
+
+  retry_policy {
+    maximum_retry_attempts = 2
+  }
+}
+
+resource "aws_lambda_permission" "eventbridge" {
+  statement_id  = "AllowExecutionFromEventBridge"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.stock.function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.stock_daily.arn
+}
+
 # --- Permisos ----------------------------------------------------------------
 # Los roles solo se crean si no se entrega var.existing_role_arn
 # (AWS Academy no permite crear roles: se usa LabRole).
