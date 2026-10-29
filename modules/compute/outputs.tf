@@ -37,10 +37,10 @@ output "ecs_service_name" {
 
 output "ecr_api_url" {
   description = "URL del repositorio ECR de la API (para docker push)."
-  value       = null # TODO: aws_ecr_repository.api.repository_url
+  value       = aws_ecr_repository.api.repository_url
 }
 
 output "ecr_web_url" {
   description = "URL del repositorio ECR del frontend."
-  value       = null # TODO: aws_ecr_repository.web.repository_url
+  value       = aws_ecr_repository.web.repository_url
 }
