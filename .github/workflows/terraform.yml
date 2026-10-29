@@ -1,0 +1,32 @@
+# Revisa formato y sintaxis en cada push y Pull Request. No necesita credenciales de AWS.
+name: terraform
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+
+      - name: Formato
+        run: terraform fmt -recursive -check -diff
+
+      - name: Validar bootstrap
+        working-directory: bootstrap
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
+
+      - name: Validar envs/dev
+        working-directory: envs/dev
+        run: |
+          terraform init -backend=false -input=false
+          terraform validate
