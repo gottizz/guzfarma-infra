@@ -2,27 +2,27 @@
 
 output "alb_arn" {
   description = "ARN del ALB (para asociar el WAF regional)."
-  value       = null # TODO: aws_lb.this.arn
+  value       = aws_lb.this.arn
 }
 
 output "alb_dns_name" {
   description = "DNS del ALB (origen de CloudFront)."
-  value       = null # TODO: aws_lb.this.dns_name
+  value       = aws_lb.this.dns_name
 }
 
 output "alb_arn_suffix" {
   description = "Sufijo del ARN del ALB (dimensión de las métricas de CloudWatch)."
-  value       = null # TODO: aws_lb.this.arn_suffix
+  value       = aws_lb.this.arn_suffix
 }
 
 output "alb_listener_arn" {
   description = "Listener al que se conecta el VPC Link de API Gateway (el HTTPS si existe, si no el HTTP)."
-  value       = null # TODO
+  value       = local.main_listener_arn
 }
 
 output "tg_api_arn_suffix" {
   description = "Sufijo del ARN del target group de la API (métricas)."
-  value       = null # TODO: aws_lb_target_group.api.arn_suffix
+  value       = aws_lb_target_group.api.arn_suffix
 }
 
 output "ecs_cluster_name" {
