@@ -1,5 +1,6 @@
-# Copiar como backend.hcl (no se sube al repo) y completar el bucket.
-bucket       = "guzfarma-tfstate-<AWS_ACCOUNT_ID>"
+# Copiar como backend.hcl (no se sube al repo).
+# El bucket está en us-east-2 (Ohio); con otra región S3 responde 301 / AccessDenied.
+bucket       = "guzfarma-tfstate-437187012215"
 key          = "lab09/dev/terraform.tfstate"
 region       = "us-east-2"
 encrypt      = true

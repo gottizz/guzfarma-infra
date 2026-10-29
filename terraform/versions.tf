@@ -15,9 +15,15 @@ terraform {
     }
   }
 
-  # Los datos del bucket van en backend.hcl (no se sube) o en -backend-config.
-  # La clave del estado es fija: lab09/dev/terraform.tfstate
-  backend "s3" {}
+  # El bucket va en backend.hcl (no se sube) o en -backend-config.
+  # La región queda fija aquí: si se toma la región por defecto del perfil
+  # (us-east-1), S3 responde 301 / AccessDenied al leer el estado.
+  backend "s3" {
+    key          = "lab09/dev/terraform.tfstate"
+    region       = "us-east-2"
+    encrypt      = true
+    use_lockfile = true
+  }
 }
 
 provider "aws" {
