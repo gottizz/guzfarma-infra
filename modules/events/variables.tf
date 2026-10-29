@@ -76,3 +76,9 @@ variable "existing_role_arn" {
   type        = string
   default     = null
 }
+
+variable "db_name" {
+  description = "Nombre de la base (SID / servicio de Oracle) a la que se conecta stock-monitor."
+  type        = string
+  default     = "GUZFARMA"
+}
