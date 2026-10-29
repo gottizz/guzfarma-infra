@@ -1,0 +1,88 @@
+# Pipeline "Hello World" de Guzfarma.
+# Define las etapas reales del proyecto, pero cada paso solo hace echo:
+# sirve para entender el flujo del repositorio antes de automatizarlo de verdad.
+name: Pipeline Guzfarma
+
+run-name: ${{ github.actor }} esta ejecutando el pipeline de Guzfarma
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  saludar-hello-world:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Hola, este job ha sido ejecutado por un ${{ github.event_name }}"
+      - run: echo "La rama es ${{ github.ref }} y el repositorio es ${{ github.repository }}"
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      - name: Listar los archivos del repositorio
+        run: |
+          ls ${{ github.workspace }}
+
+  formato:
+    needs: saludar-hello-world
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Instalando Terraform 1.10"
+      - run: echo "terraform fmt -recursive -check en todo el repositorio"
+
+  validar:
+    needs: formato
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        carpeta: [bootstrap, envs/dev]
+    steps:
+      - run: echo "terraform init -backend=false en ${{ matrix.carpeta }}"
+      - run: echo "terraform validate en ${{ matrix.carpeta }}"
+
+  escaneo-seguridad:
+    needs: formato
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Revisando que no haya tfvars, backend.hcl, tfstate ni credenciales en el repositorio"
+      - run: echo "Escaneo de seguridad del codigo Terraform (tfsec / checkov)"
+
+  construir-artefactos:
+    needs: [validar, escaneo-seguridad]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Empaquetando la Lambda notif-pedido en un .zip"
+      - run: echo "Empaquetando la Lambda stock-monitor con oracledb en un .zip"
+      - run: echo "Construyendo las imagenes Docker web (nginx :80) y api (:8080)"
+      - run: echo "Subiendo las imagenes a Amazon ECR"
+
+  plan-dev:
+    needs: construir-artefactos
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        modulo: [network, security, database, events, compute, edge, monitoring]
+    steps:
+      - run: echo "terraform init -backend-config=backend.hcl (estado remoto en S3)"
+      - run: echo "terraform plan del modulo ${{ matrix.modulo }} en el entorno dev"
+
+  apply-dev:
+    needs: plan-dev
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Esperando la aprobacion del lider tecnico"
+      - run: echo "terraform apply en envs/dev (red, seguridad, base de datos, eventos, computo, borde y monitoreo)"
+
+  pruebas-humo:
+    needs: apply-dev
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "La URL del ALB responde con la pagina de nginx"
+      - run: echo "La URL de CloudFront carga la web"
+      - run: echo "/api/* sin token de Cognito responde 401"
+      - run: echo "Un pedido de prueba en SQS llega como correo por SES"
+
+  destroy-dev:
+    needs: pruebas-humo
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "terraform destroy en envs/dev para no gastar creditos de AWS"
