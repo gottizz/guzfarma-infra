@@ -82,6 +82,52 @@ resource "aws_iam_role_policy" "rds_s3" {
   policy = data.aws_iam_policy_document.rds_s3.json
 }
 
+resource "aws_db_instance" "this" {
+  identifier = "${local.name}-oracle"
+
+  engine            = var.engine
+  engine_version    = var.engine_version
+  instance_class    = var.instance_class
+  allocated_storage = var.allocated_storage
+  db_name           = var.db_name
+  port              = var.db_port
+  license_model     = "license-included"
+
+  username                    = var.db_username
+  manage_master_user_password = true
+
+  master_user_secret_kms_key_id = var.kms_key_arn
+
+  multi_az          = var.multi_az
+  storage_encrypted = true
+  kms_key_id        = var.kms_key_arn
+
+  db_subnet_group_name   = aws_db_subnet_group.this.name
+  vpc_security_group_ids = [var.sg_db_id]
+  publicly_accessible    = false
+  parameter_group_name   = aws_db_parameter_group.this.name
+  option_group_name      = aws_db_option_group.this.name
+
+  backup_retention_period = var.backup_retention_days
+  backup_window           = var.backup_window
+  maintenance_window      = var.maintenance_window
+
+  performance_insights_enabled    = true
+  performance_insights_kms_key_id = var.kms_key_arn
+
+  deletion_protection       = var.deletion_protection
+  skip_final_snapshot       = !var.deletion_protection
+  final_snapshot_identifier = "${local.name}-final"
+
+  tags = local.tags
+}
+
+resource "aws_db_instance_role_association" "s3" {
+  db_instance_identifier = aws_db_instance.this.identifier
+  feature_name           = "S3_INTEGRATION"
+  role_arn               = aws_iam_role.rds_s3.arn
+}
+
 # --- Respaldos RMAN ----------------------------------------------------------
 
 resource "aws_s3_bucket" "rman" {
