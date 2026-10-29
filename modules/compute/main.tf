@@ -478,3 +478,100 @@ resource "aws_ecs_service" "app" {
 
   tags = local.tags
 }
+
+# =============================================================================
+# 4. Auto Scaling (RNF-09)
+# =============================================================================
+
+resource "aws_appautoscaling_target" "ecs" {
+  service_namespace  = "ecs"
+  resource_id        = "service/${aws_ecs_cluster.this.name}/${aws_ecs_service.app.name}"
+  scalable_dimension = "ecs:service:DesiredCount"
+  min_capacity       = var.min_tasks
+  max_capacity       = var.max_tasks
+}
+
+resource "aws_appautoscaling_policy" "cpu" {
+  name               = "${local.name}-cpu-target"
+  policy_type        = "TargetTrackingScaling"
+  service_namespace  = aws_appautoscaling_target.ecs.service_namespace
+  resource_id        = aws_appautoscaling_target.ecs.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs.scalable_dimension
+
+  target_tracking_scaling_policy_configuration {
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageCPUUtilization"
+    }
+
+    target_value       = var.cpu_target
+    scale_out_cooldown = 60
+    scale_in_cooldown  = 300
+  }
+}
+
+# Acciones programadas. Las expresiones cron van en UTC (Lima = UTC-5).
+# Formato: cron(minutos horas día-del-mes mes día-de-la-semana año)
+# Se encadenan con depends_on para que AWS no las procese a la vez
+# (evita ConcurrentUpdateException sobre el mismo scalable target).
+
+# Viernes 18:00 Lima = viernes 23:00 UTC -> pico de fin de semana.
+resource "aws_appautoscaling_scheduled_action" "weekend_peak" {
+  name               = "${local.name}-fin-de-semana-pico"
+  service_namespace  = aws_appautoscaling_target.ecs.service_namespace
+  resource_id        = aws_appautoscaling_target.ecs.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs.scalable_dimension
+  schedule           = "cron(0 23 ? * FRI *)"
+
+  scalable_target_action {
+    min_capacity = var.peak_min_tasks
+    max_capacity = var.max_tasks
+  }
+}
+
+# Lunes 08:00 Lima = lunes 13:00 UTC -> vuelta a lo normal.
+resource "aws_appautoscaling_scheduled_action" "weekday_normal" {
+  name               = "${local.name}-lunes-normal"
+  service_namespace  = aws_appautoscaling_target.ecs.service_namespace
+  resource_id        = aws_appautoscaling_target.ecs.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs.scalable_dimension
+  schedule           = "cron(0 13 ? * MON *)"
+
+  scalable_target_action {
+    min_capacity = var.min_tasks
+    max_capacity = var.max_tasks
+  }
+
+  depends_on = [aws_appautoscaling_scheduled_action.weekend_peak]
+}
+
+# Día 24, 00:00 Lima = día 24, 05:00 UTC -> pico de la última semana del mes.
+resource "aws_appautoscaling_scheduled_action" "month_end_peak" {
+  name               = "${local.name}-fin-de-mes-pico"
+  service_namespace  = aws_appautoscaling_target.ecs.service_namespace
+  resource_id        = aws_appautoscaling_target.ecs.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs.scalable_dimension
+  schedule           = "cron(0 5 24 * ? *)"
+
+  scalable_target_action {
+    min_capacity = var.peak_min_tasks
+    max_capacity = var.max_tasks
+  }
+
+  depends_on = [aws_appautoscaling_scheduled_action.weekday_normal]
+}
+
+# Día 1, 00:00 Lima = día 1, 05:00 UTC -> fin del pico de fin de mes.
+resource "aws_appautoscaling_scheduled_action" "month_start_normal" {
+  name               = "${local.name}-inicio-de-mes-normal"
+  service_namespace  = aws_appautoscaling_target.ecs.service_namespace
+  resource_id        = aws_appautoscaling_target.ecs.resource_id
+  scalable_dimension = aws_appautoscaling_target.ecs.scalable_dimension
+  schedule           = "cron(0 5 1 * ? *)"
+
+  scalable_target_action {
+    min_capacity = var.min_tasks
+    max_capacity = var.max_tasks
+  }
+
+  depends_on = [aws_appautoscaling_scheduled_action.month_end_peak]
+}
