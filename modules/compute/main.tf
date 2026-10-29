@@ -327,3 +327,154 @@ resource "aws_iam_role_policy" "task_app" {
     ]
   })
 }
+
+locals {
+  # --- Imágenes de prueba mientras no exista la app real ---
+  # web: nginx público. Se le agrega un archivo /health para que pase el health check del ALB.
+  web_placeholder = var.frontend_image == "public.ecr.aws/nginx/nginx:stable"
+  # api: si var.api_image está vacío, un busybox que responde en :8080 (/health y /api/).
+  api_placeholder = var.api_image == ""
+  api_image       = local.api_placeholder ? "public.ecr.aws/docker/library/busybox:stable" : var.api_image
+
+  web_container = {
+    name      = "web"
+    image     = var.frontend_image
+    essential = true
+    portMappings = [
+      { name = "web-80", containerPort = 80, protocol = "tcp" }
+    ]
+    command = local.web_placeholder ? [
+      "/bin/sh", "-c",
+      "echo ok > /usr/share/nginx/html/health && exec nginx -g 'daemon off;'"
+    ] : null
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.web.name
+        awslogs-region        = local.region
+        awslogs-stream-prefix = "web"
+      }
+    }
+  }
+
+  api_container = {
+    name      = "api"
+    image     = local.api_image
+    essential = true
+    portMappings = [
+      { name = "api-8080", containerPort = 8080, protocol = "tcp" }
+    ]
+    command = local.api_placeholder ? [
+      "sh", "-c",
+      "mkdir -p /www/api && echo ok > /www/health && echo '{\"status\":\"ok\"}' > /www/api/index.html && exec httpd -f -p 8080 -h /www"
+    ] : null
+    environment = [
+      { name = "DB_HOST", value = var.db_address },
+      { name = "DB_PORT", value = tostring(var.db_port) },
+      { name = "ORDERS_QUEUE_URL", value = var.orders_queue_url },
+      { name = "SSM_PREFIX", value = var.ssm_parameter_prefix },
+      { name = "AWS_REGION", value = local.region },
+      { name = "PORT", value = "8080" },
+    ]
+    # ECS lee los secretos al arrancar la tarea (con el rol de ejecución) y los
+    # inyecta como variables de entorno. Nunca quedan escritos en el código.
+    secrets = [
+      { name = "DB_SECRET", valueFrom = var.db_secret_arn },
+      { name = "PAYMENT_SECRET", valueFrom = var.payment_secret_arn },
+    ]
+    logConfiguration = {
+      logDriver = "awslogs"
+      options = {
+        awslogs-group         = aws_cloudwatch_log_group.api.name
+        awslogs-region        = local.region
+        awslogs-stream-prefix = "api"
+      }
+    }
+  }
+}
+
+# --- Cluster, task definition y servicio ---
+
+resource "aws_ecs_cluster" "this" {
+  name = "${local.name}-cluster"
+
+  setting {
+    name  = "containerInsights"
+    value = "enabled"
+  }
+
+  tags = local.tags
+}
+
+resource "aws_ecs_task_definition" "app" {
+  family                   = "${local.name}-app"
+  requires_compatibilities = ["FARGATE"]
+  network_mode             = "awsvpc"
+  cpu                      = var.task_cpu
+  memory                   = var.task_memory
+  execution_role_arn       = local.execution_role_arn
+  task_role_arn            = local.task_role_arn
+
+  runtime_platform {
+    operating_system_family = "LINUX"
+    cpu_architecture        = "X86_64"
+  }
+
+  # Se quitan las claves en null (p. ej. "command" cuando se usa una imagen real).
+  container_definitions = jsonencode([
+    { for k, v in local.web_container : k => v if v != null },
+    { for k, v in local.api_container : k => v if v != null },
+  ])
+
+  tags = local.tags
+}
+
+resource "aws_ecs_service" "app" {
+  name                              = "${local.name}-app"
+  cluster                           = aws_ecs_cluster.this.id
+  task_definition                   = aws_ecs_task_definition.app.arn
+  launch_type                       = "FARGATE"
+  platform_version                  = "LATEST"
+  desired_count                     = var.min_tasks
+  health_check_grace_period_seconds = 60
+  propagate_tags                    = "SERVICE"
+
+  network_configuration {
+    subnets          = var.app_subnet_ids
+    security_groups  = [var.sg_app_id]
+    assign_public_ip = false
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.web.arn
+    container_name   = "web"
+    container_port   = 80
+  }
+
+  load_balancer {
+    target_group_arn = aws_lb_target_group.api.arn
+    container_name   = "api"
+    container_port   = 8080
+  }
+
+  deployment_circuit_breaker {
+    enable   = true
+    rollback = true
+  }
+
+  # El Auto Scaling cambia desired_count; Terraform no debe devolverlo al valor inicial.
+  lifecycle {
+    ignore_changes = [desired_count]
+  }
+
+  # Los target groups deben estar asociados al ALB antes de crear el servicio.
+  depends_on = [
+    aws_lb_listener.http,
+    aws_lb_listener.https,
+    aws_lb_listener_rule.api,
+    aws_iam_role_policy.execution_secrets,
+    aws_iam_role_policy_attachment.execution_managed,
+  ]
+
+  tags = local.tags
+}

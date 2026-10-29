@@ -27,12 +27,12 @@ output "tg_api_arn_suffix" {
 
 output "ecs_cluster_name" {
   description = "Nombre del cluster ECS."
-  value       = null # TODO: aws_ecs_cluster.this.name
+  value       = aws_ecs_cluster.this.name # TODO: aws_ecs_cluster.this.name
 }
 
 output "ecs_service_name" {
   description = "Nombre del servicio ECS."
-  value       = null # TODO: aws_ecs_service.app.name
+  value       = aws_ecs_service.app.name # TODO: aws_ecs_service.app.name
 }
 
 output "ecr_api_url" {
