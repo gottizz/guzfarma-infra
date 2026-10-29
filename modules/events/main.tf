@@ -41,6 +41,62 @@ resource "aws_sqs_queue" "orders" {
   tags = local.tags
 }
 
+data "archive_file" "notif" {
+  type        = "zip"
+  source_dir  = "${var.lambdas_source_dir}/notif_pedido"
+  output_path = "${path.module}/.build/notif_pedido.zip"
+}
+
+resource "aws_cloudwatch_log_group" "notif" {
+  name              = "/aws/lambda/${local.notif_name}"
+  retention_in_days = 90
+  tags              = local.tags
+}
+
+resource "aws_lambda_function" "notif" {
+  function_name = local.notif_name
+  description   = "Envía por SES la confirmación de cada pedido de la cola SQS."
+  role          = local.notif_role_arn
+  runtime       = "python3.12"
+  handler       = "handler.lambda_handler"
+  timeout       = local.notif_timeout
+  memory_size   = 128
+
+  filename         = data.archive_file.notif.output_path
+  source_code_hash = data.archive_file.notif.output_base64sha256
+
+  environment {
+    variables = {
+      SENDER_EMAIL = var.ses_sender_email
+    }
+  }
+
+  tags = local.tags
+
+  depends_on = [
+    aws_cloudwatch_log_group.notif,
+    aws_iam_role_policy_attachment.notif_logs,
+    aws_iam_role_policy.notif,
+  ]
+}
+
+resource "aws_lambda_event_source_mapping" "orders" {
+  event_source_arn = aws_sqs_queue.orders.arn
+  function_name    = aws_lambda_function.notif.arn
+  batch_size       = 10
+
+  # Solo se reintentan los mensajes que fallaron, no todo el lote.
+  function_response_types = ["ReportBatchItemFailures"]
+
+  tags = local.tags
+}
+
+# Llega un correo de AWS al remitente: hay que abrir el enlace para verificarlo.
+resource "aws_sesv2_email_identity" "sender" {
+  email_identity = var.ses_sender_email
+  tags           = local.tags
+}
+
 # --- Permisos ----------------------------------------------------------------
 # Los roles solo se crean si no se entrega var.existing_role_arn
 # (AWS Academy no permite crear roles: se usa LabRole).
