@@ -22,3 +22,6 @@ lambdas/**/*.zip
 Thumbs.db
 .vscode/
 .idea/
+
+# Dependencias de Python instaladas por Terraform junto a stock_monitor
+lambdas/**/vendor/

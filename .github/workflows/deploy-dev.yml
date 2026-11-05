@@ -1,0 +1,67 @@
+# Despliegue del laboratorio 09 en AWS (entorno dev).
+# Solo corre con push a development y entra a AWS por OIDC con el rol del entorno dev.
+name: Deploy dev
+
+run-name: ${{ github.actor }} despliega lab09 en dev
+
+on:
+  push:
+    branches: [development]
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: lab09-dev
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    environment: dev
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      - name: Credenciales AWS por OIDC
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Identidad en AWS
+        run: aws sts get-caller-identity
+
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.10.5
+
+      - name: Terraform init
+        run: >
+          terraform init -input=false
+          -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}"
+          -backend-config="key=lab09/dev/terraform.tfstate"
+          -backend-config="region=${{ vars.AWS_REGION }}"
+          -backend-config="encrypt=true"
+          -backend-config="use_lockfile=true"
+
+      - name: Terraform validate
+        run: terraform validate
+
+      - name: Terraform plan
+        run: terraform plan -input=false -var="region=${{ vars.AWS_REGION }}" -out=tfplan
+
+      - name: Terraform apply
+        run: terraform apply -input=false tfplan
+
+      - name: Probar la API
+        run: |
+          URL=$(terraform output -raw api_url)
+          echo "GET $URL/salud"
+          curl -s "$URL/salud"; echo
+          echo "GET $URL/productos sin token (debe dar 401)"
+          curl -s -o /dev/null -w "%{http_code}\n" "$URL/productos"

@@ -77,3 +77,9 @@ variable "rds_cpu_threshold" {
   type        = number
   default     = 75
 }
+
+variable "rds_allocated_storage_gb" {
+  description = "Almacenamiento asignado a RDS en GB, para calcular el umbral del 20 % libre (module.database)."
+  type        = number
+  default     = 20
+}

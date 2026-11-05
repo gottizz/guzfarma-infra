@@ -1,0 +1,6 @@
+# Copiar como backend.hcl (no se sube al repo) y completar el bucket.
+bucket       = "guzfarma-tfstate-<AWS_ACCOUNT_ID>"
+key          = "lab09/dev/terraform.tfstate"
+region       = "us-east-2"
+encrypt      = true
+use_lockfile = true
