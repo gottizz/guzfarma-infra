@@ -121,6 +121,7 @@ resource "aws_db_instance" "this" {
 
   tags = local.tags
   enabled_cloudwatch_logs_exports = ["alert", "audit", "listener", "trace"]
+  auto_minor_version_upgrade = true
 }
 
 resource "aws_db_instance_role_association" "s3" {
