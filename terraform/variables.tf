@@ -19,5 +19,5 @@ variable "prefix" {
 variable "log_retention_days" {
   description = "Días que se conservan los logs de la Lambda."
   type        = number
-  default     = 7
+  default     = 365
 }
