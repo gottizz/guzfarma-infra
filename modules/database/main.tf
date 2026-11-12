@@ -120,6 +120,7 @@ resource "aws_db_instance" "this" {
   final_snapshot_identifier = "${local.name}-final"
 
   tags = local.tags
+  enabled_cloudwatch_logs_exports = ["alert", "audit", "listener", "trace"]
 }
 
 resource "aws_db_instance_role_association" "s3" {
