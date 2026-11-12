@@ -6,6 +6,13 @@ on:
     branches: [main]
   pull_request:
 
+
+permissions:
+  contents: read
+
+
+
+
 jobs:
   validate:
     runs-on: ubuntu-latest
@@ -30,3 +37,5 @@ jobs:
         run: |
           terraform init -backend=false -input=false
           terraform validate
+
+
